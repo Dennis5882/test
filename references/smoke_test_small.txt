@@ -2,3 +2,4 @@ This is a small smoke test input for the AI codification pipeline.
 
 Clause 1. The system should parse a short text reference.
 Clause 2. The workflow should produce structured outputs.
+Clause 3. This update triggers a text-only workflow smoke test.
