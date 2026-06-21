@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'references/**'
+  workflow_dispatch:
 jobs:
   ai_process:
     runs-on: ubuntu-latest

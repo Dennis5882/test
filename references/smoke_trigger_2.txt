@@ -1,0 +1,5 @@
+Smoke trigger #2 for integration-failure diagnostics.
+
+Clause 1. Process only this newly added reference file.
+Clause 2. Surface the integration step's real error in the logs.
+Clause 3. Output must contain a manual, source files, assumptions, and open questions.
