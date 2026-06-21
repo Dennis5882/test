@@ -1,0 +1,5 @@
+This is a small smoke test for robust JSON response parsing.
+
+Clause 1. The automation should process this newly added reference only.
+Clause 2. The AI response should be parsed even when formatted as JSON output.
+Clause 3. The final output should include a manual, source files, assumptions, and open questions.
