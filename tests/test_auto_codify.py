@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.auto_codify import PipelineError, collect_reference_files, parse_json_response
+from scripts.auto_codify import (
+    PipelineError,
+    collect_reference_files,
+    normalize_source_rel_path,
+    parse_json_response,
+)
 
 
 def test_collect_reference_files_uses_explicit_changed_files(
@@ -73,3 +78,23 @@ def test_parse_json_response_extracts_json_object_from_text() -> None:
     )
 
     assert payload["chunk_label"] == "chunk_1"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("/src/smoke_trigger.py", "smoke_trigger.py"),
+        ("src/wind_load.py", "wind_load.py"),
+        ("wind_load.py", "wind_load.py"),
+        ("/src/loads/wind.py", "loads/wind.py"),
+        ("src\\loads\\wind.py", "loads/wind.py"),
+    ],
+)
+def test_normalize_source_rel_path_strips_prefixes(raw: str, expected: str) -> None:
+    assert normalize_source_rel_path(raw).as_posix() == expected
+
+
+@pytest.mark.parametrize("bad", ["../escape.py", "src/../../escape.py", "notes.txt", "  "])
+def test_normalize_source_rel_path_rejects_invalid(bad: str) -> None:
+    with pytest.raises(PipelineError):
+        normalize_source_rel_path(bad)

@@ -357,6 +357,26 @@ def request_integrated_output(
     return payload
 
 
+def normalize_source_rel_path(raw_path: str) -> Path:
+    """Reduce a model-provided source path to a safe relative path under src/.
+
+    모델은 PROMPT.md 안내(`/src/ 기준 상대경로`) 때문에 '/src/foo.py' 또는
+    'src/foo.py' 처럼 슬래시·접두어가 붙은 경로를 자주 반환한다. 이를 모두
+    SRC_DIR 기준 상대경로로 정규화하고, 경로 이탈(..)이나 비-.py 는 거부한다.
+    """
+    cleaned = raw_path.strip().replace("\\", "/").lstrip("/")
+    if cleaned.startswith("src/"):
+        cleaned = cleaned[len("src/"):]
+    cleaned = cleaned.strip("/")
+
+    candidate = Path(cleaned)
+    if not cleaned or candidate.is_absolute() or ".." in candidate.parts:
+        raise PipelineError(f"허용되지 않는 source path: {raw_path}")
+    if candidate.suffix != ".py":
+        raise PipelineError(f"source path 는 .py 여야 합니다: {raw_path}")
+    return candidate
+
+
 def validate_final_payload(payload: dict, file_name: str) -> None:
     """Validate the final output contract."""
     required_keys = {
@@ -386,16 +406,17 @@ def validate_final_payload(payload: dict, file_name: str) -> None:
         if not isinstance(content_value, str) or not content_value.strip():
             raise PipelineError(f"source_files[{index}].content 형식 오류: {file_name}")
 
-        normalized = Path(path_value)
-        if normalized.is_absolute() or ".." in normalized.parts:
-            raise PipelineError(f"허용되지 않는 source path: {file_name} -> {path_value}")
-        if normalized.suffix != ".py":
-            raise PipelineError(f"source path 는 .py 여야 합니다: {file_name} -> {path_value}")
+        # 슬래시/접두어 변형을 정규화하면서 경로 이탈·비-.py 를 검증한다.
+        try:
+            normalize_source_rel_path(path_value)
+        except PipelineError as exc:
+            raise PipelineError(f"{exc} (대상: {file_name})") from exc
 
 
 def safe_source_path(relative_path: str) -> Path:
     """Resolve a source file path under src/ without allowing traversal."""
-    candidate = (SRC_DIR / relative_path).resolve()
+    normalized = normalize_source_rel_path(relative_path)
+    candidate = (SRC_DIR / normalized).resolve()
     src_root = SRC_DIR.resolve()
     try:
         candidate.relative_to(src_root)
