@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -415,15 +416,17 @@ def validate_final_payload(payload: dict, file_name: str) -> None:
             raise PipelineError(f"{exc} (대상: {file_name})") from exc
 
 
-def safe_source_path(relative_path: str) -> Path:
-    """Resolve a source file path under src/ without allowing traversal."""
+def safe_source_path(relative_path: str, root: Path = SRC_DIR) -> Path:
+    """Resolve a source file path under `root` without allowing traversal."""
     normalized = normalize_source_rel_path(relative_path)
-    candidate = (SRC_DIR / normalized).resolve()
-    src_root = SRC_DIR.resolve()
+    candidate = (root / normalized).resolve()
+    root_resolved = root.resolve()
     try:
-        candidate.relative_to(src_root)
+        candidate.relative_to(root_resolved)
     except ValueError as exc:
-        raise PipelineError(f"src/ 밖으로 벗어나는 경로는 허용되지 않습니다: {relative_path}") from exc
+        raise PipelineError(
+            f"{root.as_posix()} 밖으로 벗어나는 경로는 허용되지 않습니다: {relative_path}"
+        ) from exc
     return candidate
 
 
@@ -436,9 +439,17 @@ def write_outputs(reference_file: Path, chunk_analyses: list[dict], payload: dic
     manual_path = DOCS_DIR / f"{base_name}_분석.md"
     manual_path.write_text(payload["manual_markdown"].strip() + "\n", encoding="utf-8")
 
+    # 생성 소스는 reference 별 하위 폴더(src/<규범명>/)에 모은다.
+    # 재처리 시 모델이 파일명을 다르게 지어도 고아가 쌓이지 않도록, 먼저 폴더를 비운다(멱등).
+    # (src/ 루트의 손으로 작성한 모듈은 건드리지 않는다.)
+    src_subdir = SRC_DIR / base_name
+    if src_subdir.exists():
+        shutil.rmtree(src_subdir)
+    src_subdir.mkdir(parents=True, exist_ok=True)
+
     saved_sources = []
     for source_file in payload["source_files"]:
-        source_path = safe_source_path(source_file["path"].strip())
+        source_path = safe_source_path(source_file["path"].strip(), src_subdir)
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_text(source_file["content"].rstrip() + "\n", encoding="utf-8")
         saved_sources.append(str(source_path.relative_to(Path.cwd())).replace("\\", "/"))
