@@ -23,7 +23,8 @@ jobs:
       - name: Detect Changed Reference Files
         id: changed_refs
         run: |
-          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+          if [ -z "${{ github.event.before }}" ] || [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            # 수동 실행(workflow_dispatch, before 없음) 또는 새 브랜치 최초 push 시 references 전체 처리.
             changed_files=$(find references -type f \( -name "*.txt" -o -name "*.pdf" \) | sort)
           else
             changed_files=$(git -c core.quotePath=false diff --diff-filter=A --name-only "${{ github.event.before }}" "${{ github.sha }}" -- 'references/**/*.txt' 'references/**/*.pdf' 'references/*.txt' 'references/*.pdf' | sort -u)

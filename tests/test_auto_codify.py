@@ -4,6 +4,7 @@ import pytest
 
 from scripts.auto_codify import (
     PipelineError,
+    call_with_retries,
     collect_reference_files,
     normalize_source_rel_path,
     parse_json_response,
@@ -98,3 +99,52 @@ def test_normalize_source_rel_path_strips_prefixes(raw: str, expected: str) -> N
 def test_normalize_source_rel_path_rejects_invalid(bad: str) -> None:
     with pytest.raises(PipelineError):
         normalize_source_rel_path(bad)
+
+
+def test_call_with_retries_succeeds_after_transient_errors() -> None:
+    calls = {"n": 0}
+    slept = []
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ValueError("transient")
+        return "ok"
+
+    result = call_with_retries(
+        flaky, retries=3, base_delay=1, retryable=(ValueError,), sleep=slept.append
+    )
+
+    assert result == "ok"
+    assert calls["n"] == 3
+    assert slept == [1, 2]  # exponential backoff: 1*2^0, 1*2^1
+
+
+def test_call_with_retries_does_not_retry_non_retryable() -> None:
+    calls = {"n": 0}
+
+    def boom():
+        calls["n"] += 1
+        raise KeyError("auth")
+
+    with pytest.raises(KeyError):
+        call_with_retries(
+            boom, retries=3, base_delay=0, retryable=(ValueError,), sleep=lambda _d: None
+        )
+
+    assert calls["n"] == 1  # raised immediately, no retries
+
+
+def test_call_with_retries_exhausts_and_raises_last() -> None:
+    calls = {"n": 0}
+
+    def always_fail():
+        calls["n"] += 1
+        raise ValueError(f"fail-{calls['n']}")
+
+    with pytest.raises(ValueError):
+        call_with_retries(
+            always_fail, retries=2, base_delay=0, retryable=(ValueError,), sleep=lambda _d: None
+        )
+
+    assert calls["n"] == 3  # initial + 2 retries

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from openai import OpenAI
@@ -14,10 +15,60 @@ PROMPT_FILE = Path("PROMPT.md")
 MODEL_NAME = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 PDF_CHUNK_PAGE_SIZE = int(os.environ.get("PDF_CHUNK_PAGE_SIZE", "8"))
 TEXT_CHUNK_CHAR_LIMIT = int(os.environ.get("TEXT_CHUNK_CHAR_LIMIT", "12000"))
+# 통합 출력이 잘리지 않도록 출력 토큰 한도를 명시한다(#3 완화).
+MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8192"))
+# 일시적 API 오류 재시도 설정(#4).
+API_MAX_RETRIES = int(os.environ.get("API_MAX_RETRIES", "3"))
+API_RETRY_BASE_DELAY = float(os.environ.get("API_RETRY_BASE_DELAY", "2"))
+
+try:  # 일시적(transient) 오류만 재시도하기 위한 예외 집합. SDK 버전차에 견고하게 임포트.
+    from openai import (
+        APIConnectionError,
+        APITimeoutError,
+        InternalServerError,
+        RateLimitError,
+    )
+
+    RETRYABLE_ERRORS: tuple = (
+        APIConnectionError,
+        APITimeoutError,
+        InternalServerError,
+        RateLimitError,
+    )
+except Exception:  # pragma: no cover - SDK 미설치/구버전 방어
+    RETRYABLE_ERRORS = ()
 
 
 class PipelineError(Exception):
     """Raised when the automation pipeline cannot produce valid outputs."""
+
+
+def call_with_retries(
+    func,
+    *,
+    retries: int = API_MAX_RETRIES,
+    base_delay: float = API_RETRY_BASE_DELAY,
+    retryable: tuple = RETRYABLE_ERRORS,
+    sleep=time.sleep,
+):
+    """Call func(), retrying transient errors with exponential backoff.
+
+    재시도 대상이 아닌 예외(인증·잘못된 요청 등)는 즉시 전파한다.
+    """
+    attempts = max(1, retries + 1)
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            return func()
+        except Exception as exc:  # noqa: BLE001 - retryable 여부로 분기
+            if retryable and not isinstance(exc, retryable):
+                raise
+            last_exc = exc
+            if attempt < attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                log(f"일시적 API 오류, {delay:.0f}s 후 재시도 ({attempt + 1}/{attempts - 1}): {exc}")
+                sleep(delay)
+    raise last_exc
 
 
 def log(message: str) -> None:
@@ -282,11 +333,13 @@ def request_chunk_analysis(
     )
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": chunk_prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.1,
+        response = call_with_retries(
+            lambda: client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": chunk_prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
         )
     except Exception as exc:
         raise PipelineError(f"청크 분석 API 호출 실패: {file_name} {chunk['label']} ({exc})") from exc
@@ -333,14 +386,17 @@ def request_integrated_output(
     )
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
+        response = call_with_retries(
+            lambda: client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=MAX_OUTPUT_TOKENS,
+            )
         )
     except Exception as exc:
         raise PipelineError(f"통합 분석 API 호출 실패: {file_name} ({exc})") from exc
