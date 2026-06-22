@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+# 저장소 루트를 import 경로에 넣어, `scripts`/`src` 패키지를 어디서 실행하든 임포트 가능하게 한다.
+# (CI는 `pytest`로 실행하므로 cwd 가 자동으로 sys.path 에 들어가지 않는다.)
+pythonpath = ["."]
+# 테스트 수집을 tests/ 로 한정 — AI가 생성한 src/*.py 가 테스트로 오인 수집되지 않도록.
+testpaths = ["tests"]
